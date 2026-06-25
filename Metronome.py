@@ -7,8 +7,7 @@ from PyQt5.QtWidgets import (
     QGridLayout, QFrame, QSpinBox
 )
 from PyQt5.QtCore import Qt, QTimer
-from PyQt5.QtGui import (QPainter, QColor, QBrush, QPen, QIntValidator,
-                         QFont, QRegion, QPainterPath)
+from PyQt5.QtGui import QPainter, QColor, QBrush, QPen, QIntValidator, QFont
 
 try:
     import sounddevice as sd
@@ -144,32 +143,6 @@ class BeatDot(QFrame):
                 p.setBrush(QBrush(c))
                 p.setPen(Qt.NoPen)
                 p.drawEllipse(start_x + i * gap - dot_r // 2, y, dot_r, dot_r)
-
-
-# ---------- 迷你条：自绘平滑圆角 ----------
-class MiniBar(QFrame):
-    def __init__(self, parent=None):
-        super().__init__(parent)
-        self.bg = QColor("#FFFFFF")
-        self.border = QColor("#E5E5EA")
-        self.radius = 22
-
-    def set_colors(self, bg, border):
-        self.bg = QColor(bg)
-        self.border = QColor(border)
-        self.update()
-
-    def paintEvent(self, e):
-        p = QPainter(self)
-        p.setRenderHint(QPainter.Antialiasing, True)
-        rect = self.rect().adjusted(1, 1, -1, -1)
-        path = QPainterPath()
-        path.addRoundedRect(float(rect.x()), float(rect.y()),
-                            float(rect.width()), float(rect.height()),
-                            self.radius, self.radius)
-        p.fillPath(path, QBrush(self.bg))
-        p.setPen(QPen(self.border, 1.2))
-        p.drawPath(path)
 
 
 # ---------- 音频引擎：采样级精确计时（无锁，避免死锁） ----------
@@ -402,10 +375,9 @@ class Metronome(QWidget):
         self.play_btn.clicked.connect(self.toggle_play)
         self.root.addWidget(self.play_btn)
 
-        # ---- 迷你条（自绘平滑圆角） ----
-        self.mini_bar = MiniBar(self)
+        # ---- 迷你条（普通实心，无特效） ----
+        self.mini_bar = QWidget(self)
         self.mini_bar.setObjectName("miniBar")
-        self.mini_bar.setAttribute(Qt.WA_TranslucentBackground, True)
         mb = QHBoxLayout(self.mini_bar)
         mb.setContentsMargins(8, 0, 10, 0)
         mb.setSpacing(10)
@@ -630,15 +602,14 @@ class Metronome(QWidget):
         if not editing:
             super().keyPressEvent(e)
 
-    # ---------------- 迷你模式 ----------------
+    # ---------------- 迷你模式（无边框 + 不透明，求稳） ----------------
     def set_mini(self, on):
         self.mini_mode = on
         self.mini_chk.blockSignals(True)
         self.mini_chk.setChecked(on)
         self.mini_chk.blockSignals(False)
 
-        m = 16                      # 留白（给透明边缘呼吸空间）
-        bar_w, bar_h = 252, 44
+        bar_w, bar_h = 260, 56
 
         if on:
             self._set_main_visible(False)
@@ -646,13 +617,16 @@ class Metronome(QWidget):
             self.setMinimumSize(0, 0)
             self.setMaximumSize(16777215, 16777215)
             self.clearMask()
-            self.setAttribute(Qt.WA_TranslucentBackground, True)
+            self.setAttribute(Qt.WA_TranslucentBackground, False)  # 不透明，求稳
+            # 无边框 + 置顶（不带 Tool、不透明 → 不触发 layered window 崩溃）
             self.setWindowFlags(
-                Qt.FramelessWindowHint | Qt.WindowStaysOnTopHint | Qt.Tool)
+                Qt.FramelessWindowHint | Qt.WindowStaysOnTopHint)
             self.mini_pin.setChecked(True)
             self.mini_pin.setText("📌")
+            self.mini_bar.show()
+            self.mini_bar.raise_()
             self.show()
-            QTimer.singleShot(0, lambda: self._layout_mini(bar_w, bar_h, m))
+            QTimer.singleShot(0, lambda: self._fit_mini(bar_w, bar_h))
         else:
             self.clearMask()
             self.mini_bar.hide()
@@ -660,7 +634,6 @@ class Metronome(QWidget):
             self._set_main_visible(True)
             self.root.setContentsMargins(26, 22, 26, 22)
             self.setWindowFlags(Qt.Window)
-            # 修复：用 setWindowFlag，而非不存在的 setWindowStaysOnTopHint
             self.setWindowFlag(Qt.WindowStaysOnTopHint,
                                self.top_chk.isChecked())
             self.setMinimumSize(self.normal_min_w, 0)
@@ -670,13 +643,11 @@ class Metronome(QWidget):
                 self.normal_min_w, self.sizeHint().height()))
         self.apply_theme()
 
-    def _layout_mini(self, bar_w, bar_h, m):
-        total_w, total_h = bar_w + 2 * m, bar_h + 2 * m
-        self.setFixedSize(total_w, total_h)
-        self.mini_bar.setGeometry(m, m, bar_w, bar_h)
+    def _fit_mini(self, bar_w, bar_h):
+        self.setFixedSize(bar_w, bar_h)
+        self.mini_bar.setGeometry(0, 0, bar_w, bar_h)
         self.mini_bar.show()
         self.mini_bar.raise_()
-        self.update()
 
     def _set_main_visible(self, vis):
         def walk(layout):
@@ -694,7 +665,7 @@ class Metronome(QWidget):
         self.setWindowFlag(Qt.WindowStaysOnTopHint, on)
         self.show()
 
-    # 迷你条可拖动
+    # 迷你条可拖动（无边框靠鼠标拖动）
     def mousePressEvent(self, e):
         if self.mini_mode and e.button() == Qt.LeftButton:
             self._drag_pos = e.globalPos() - self.frameGeometry().topLeft()
@@ -793,8 +764,12 @@ class Metronome(QWidget):
                 background: {th['blue']}; border: 1px solid {th['blue']};
             }}
 
-            /* ---- 迷你条（自绘圆角，背景透明） ---- */
-            #miniBar {{ background: transparent; border: none; }}
+            /* ---- 迷你条（实心，无特效） ---- */
+            #miniBar {{
+                background: {th['glass']};
+                border: 1px solid {th['glassBorder']};
+                border-radius: 10px;
+            }}
             #miniPlay {{
                 background: {th['blue']}; color: white; border: none;
                 border-radius: 16px; font-size: 13px; font-weight: 600;
@@ -826,7 +801,6 @@ class Metronome(QWidget):
             #miniIcon:hover {{ background: {th['hover']}; }}
             #miniIcon:checked {{ background: {th['blue']}; }}
         """)
-        self.mini_bar.set_colors(th["glass"], th["glassBorder"])
 
     def closeEvent(self, e):
         self.engine.stop()
