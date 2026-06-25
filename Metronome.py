@@ -4,10 +4,11 @@ import numpy as np
 from PyQt5.QtWidgets import (
     QApplication, QWidget, QVBoxLayout, QHBoxLayout, QLabel,
     QPushButton, QSlider, QComboBox, QLineEdit, QCheckBox,
-    QGridLayout, QFrame, QSpinBox, QGraphicsDropShadowEffect
+    QGridLayout, QFrame, QSpinBox
 )
 from PyQt5.QtCore import Qt, QTimer
-from PyQt5.QtGui import QPainter, QColor, QBrush, QPen, QIntValidator, QFont
+from PyQt5.QtGui import (QPainter, QColor, QBrush, QPen, QIntValidator,
+                         QFont, QRegion, QPainterPath)
 
 try:
     import sounddevice as sd
@@ -19,10 +20,11 @@ SR = 44100
 
 # ---------- 音色：不同频率 + 不同包络 ----------
 SOUND_PRESETS = {
-    "Click（清脆）": {"accent": 1800, "normal": 1200, "sub": 900,  "decay": 70, "shape": "sine"},
-    "Wood（木鱼）":  {"accent": 1100, "normal": 750,  "sub": 550,  "decay": 90, "shape": "tri"},
-    "Beep（电子）":  {"accent": 2200, "normal": 1500, "sub": 1100, "decay": 40, "shape": "square"},
-    "Soft（柔和）":  {"accent": 880,  "normal": 587,  "sub": 440,  "decay": 30, "shape": "sine"},
+    "Click（清脆）": {"accent": 1800, "normal": 1200, "sub": 900,  "decay": 70,  "shape": "sine"},
+    "Wood（木鱼）":  {"accent": 1100, "normal": 750,  "sub": 550,  "decay": 90,  "shape": "tri"},
+    "Beep（电子）":  {"accent": 2200, "normal": 1500, "sub": 1100, "decay": 40,  "shape": "square"},
+    "Soft（柔和）":  {"accent": 880,  "normal": 587,  "sub": 440,  "decay": 30,  "shape": "sine"},
+    "Rim（敲边鼓）": {"accent": 2000, "normal": 1300, "sub": 900,  "decay": 130, "shape": "noise"},
 }
 
 
@@ -34,6 +36,10 @@ def make_click(freq, decay=60, shape="sine", duration=0.05):
         osc = 2 * np.abs(2 * (t * freq - np.floor(t * freq + 0.5))) - 1
     elif shape == "square":
         osc = np.sign(np.sin(2 * np.pi * freq * t)) * 0.7
+    elif shape == "noise":
+        osc = np.random.uniform(-1, 1, len(t)).astype(np.float32)
+        amp = min(1.0, freq / 2000.0)   # 用 freq 当强度，区分重拍/普通/细分
+        osc = osc * amp
     else:
         osc = np.sin(2 * np.pi * freq * t)
     env = np.exp(-t * decay)
@@ -59,16 +65,14 @@ THEMES = {
         "card": "#FFFFFF", "border": "#E5E5EA", "hover": "#F2F2F7",
         "accent": "#FF3B30", "normal": "#007AFF", "idle": "#D1D1D6",
         "mute": "#E5E5EA", "blue": "#007AFF",
-        "glass": "rgba(255,255,255,0.72)",
-        "glassBorder": "rgba(255,255,255,0.55)",
+        "glass": "#FFFFFF", "glassBorder": "#E5E5EA",
     },
     "dark": {
         "bg": "#1C1C1E", "text": "#F2F2F7", "sub": "#8E8E93",
         "card": "#2C2C2E", "border": "#3A3A3C", "hover": "#3A3A3C",
         "accent": "#FF453A", "normal": "#0A84FF", "idle": "#48484A",
         "mute": "#2C2C2E", "blue": "#0A84FF",
-        "glass": "rgba(44,44,46,0.78)",
-        "glassBorder": "rgba(255,255,255,0.12)",
+        "glass": "#2C2C2E", "glassBorder": "#3A3A3C",
     },
 }
 
@@ -79,7 +83,7 @@ class BeatDot(QFrame):
 
     def __init__(self, beat, on_change):
         super().__init__()
-        self.beat = beat            # {'state':..., 'sub':...}
+        self.beat = beat
         self.on_change = on_change
         self.active = False
         self.dark = False
@@ -140,6 +144,32 @@ class BeatDot(QFrame):
                 p.setBrush(QBrush(c))
                 p.setPen(Qt.NoPen)
                 p.drawEllipse(start_x + i * gap - dot_r // 2, y, dot_r, dot_r)
+
+
+# ---------- 迷你条：自绘平滑圆角 ----------
+class MiniBar(QFrame):
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self.bg = QColor("#FFFFFF")
+        self.border = QColor("#E5E5EA")
+        self.radius = 22
+
+    def set_colors(self, bg, border):
+        self.bg = QColor(bg)
+        self.border = QColor(border)
+        self.update()
+
+    def paintEvent(self, e):
+        p = QPainter(self)
+        p.setRenderHint(QPainter.Antialiasing, True)
+        rect = self.rect().adjusted(1, 1, -1, -1)
+        path = QPainterPath()
+        path.addRoundedRect(float(rect.x()), float(rect.y()),
+                            float(rect.width()), float(rect.height()),
+                            self.radius, self.radius)
+        p.fillPath(path, QBrush(self.bg))
+        p.setPen(QPen(self.border, 1.2))
+        p.drawPath(path)
 
 
 # ---------- 音频引擎：采样级精确计时（无锁，避免死锁） ----------
@@ -218,7 +248,6 @@ class Metronome(QWidget):
         (76, "Andante"), (108, "Moderato"), (120, "Allegro"),
         (168, "Presto"), (200, "Prestissimo"), (10000, "")
     ]
-    MINI_MARGIN = 18   # 阴影留白
 
     def __init__(self):
         super().__init__()
@@ -257,7 +286,7 @@ class Metronome(QWidget):
         self.root.setContentsMargins(26, 22, 26, 22)
         self.root.setSpacing(14)
 
-        # 顶部栏：术语 + 深浅色
+        # 顶部栏
         top = QHBoxLayout()
         self.term_label = QLabel("Allegro")
         self.term_label.setObjectName("term")
@@ -373,27 +402,25 @@ class Metronome(QWidget):
         self.play_btn.clicked.connect(self.toggle_play)
         self.root.addWidget(self.play_btn)
 
-        # ---- 迷你条（毛玻璃悬浮 + 精修） ----
-        self.mini_bar = QWidget(self)
+        # ---- 迷你条（自绘平滑圆角） ----
+        self.mini_bar = MiniBar(self)
         self.mini_bar.setObjectName("miniBar")
+        self.mini_bar.setAttribute(Qt.WA_TranslucentBackground, True)
         mb = QHBoxLayout(self.mini_bar)
         mb.setContentsMargins(8, 0, 10, 0)
         mb.setSpacing(10)
 
-        # 播放键：正圆主按钮
         self.mini_play = QPushButton("▶")
         self.mini_play.setObjectName("miniPlay")
         self.mini_play.setFixedSize(32, 32)
         self.mini_play.setCursor(Qt.PointingHandCursor)
         self.mini_play.clicked.connect(self.toggle_play)
 
-        # 节拍闪烁点
         self.mini_dot = QLabel("●")
         self.mini_dot.setObjectName("miniDot")
         self.mini_dot.setFixedWidth(14)
         self.mini_dot.setAlignment(Qt.AlignCenter)
 
-        # BPM 数字
         self.mini_bpm = QLabel(str(self.bpm))
         self.mini_bpm.setObjectName("miniBpm")
         self.mini_bpm.setAlignment(Qt.AlignVCenter | Qt.AlignLeft)
@@ -402,7 +429,6 @@ class Metronome(QWidget):
         self.mini_unit.setObjectName("miniUnit")
         self.mini_unit.setAlignment(Qt.AlignBottom | Qt.AlignLeft)
 
-        # 竖向微调
         step_box = QVBoxLayout()
         step_box.setSpacing(1)
         step_box.setContentsMargins(0, 0, 0, 0)
@@ -417,12 +443,10 @@ class Metronome(QWidget):
         step_box.addWidget(self.mini_plus)
         step_box.addWidget(self.mini_minus)
 
-        # 分隔线
         sep = QFrame()
         sep.setObjectName("miniSep")
         sep.setFixedSize(1, 22)
 
-        # 置顶 + 返回
         self.mini_pin = QPushButton("📌")
         self.mini_pin.setObjectName("miniIcon")
         self.mini_pin.setFixedSize(26, 26)
@@ -447,13 +471,6 @@ class Metronome(QWidget):
         mb.addWidget(sep)
         mb.addWidget(self.mini_pin)
         mb.addWidget(self.mini_back)
-
-        # 投影（灵动岛悬浮感）
-        shadow = QGraphicsDropShadowEffect(self.mini_bar)
-        shadow.setBlurRadius(28)
-        shadow.setOffset(0, 6)
-        shadow.setColor(QColor(0, 0, 0, 90))
-        self.mini_bar.setGraphicsEffect(shadow)
         self.mini_bar.hide()
 
         self.update_display()
@@ -469,81 +486,6 @@ class Metronome(QWidget):
             d.dark = self.dark
             self.dots_layout.addWidget(d)
             self.dots.append(d)
-
-    # ---------------- 逻辑 ----------------
-    def on_beats_edited(self):
-        pass
-
-    def speed_term(self, bpm):
-        for limit, name in self.SPEED_TERMS:
-            if bpm < limit:
-                return name
-        return ""
-
-    def update_display(self):
-        self.bpm_edit.setText(str(self.bpm))
-        self.mini_bpm.setText(str(self.bpm))
-        self.term_label.setText(self.speed_term(self.bpm))
-        if self.slider.value() != self.bpm:
-            self.slider.blockSignals(True)
-            self.slider.setValue(self.bpm)
-            self.slider.blockSignals(False)
-
-    def set_bpm(self, v):
-        self.bpm = max(20, min(400, int(v)))
-        self.update_display()
-        if self.is_playing:
-            self.engine.set_interval(self._sub_interval())
-
-    def change_bpm(self, d):
-        self.set_bpm(self.bpm + d)
-
-    def on_bpm_typed(self):
-        try:
-            self.set_bpm(int(self.bpm_edit.text()))
-        except ValueError:
-            self.update_display()
-
-    def on_slider(self, v):
-        self.set_bpm(v)
-
-    def on_beats_changed(self, v):
-        self.beats_per_bar = v
-        while len(self.beats) < v:
-            self.beats.append({"state": "normal", "sub": 1})
-        self.beats = self.beats[:v]
-        self.build_dots()
-        self.apply_theme()
-
-    def tap_tempo(self):
-        now = time.time()
-        self.tap_times.append(now)
-        self.tap_times = [t for t in self.tap_times if now - t < 2.0]
-        if len(self.tap_times) >= 2:
-            bpm = 60.0 / np.mean(np.diff(self.tap_times))
-            self.set_bpm(round(bpm))
-
-    # ---------------- 播放 ----------------
-    def _sub_interval(self):
-        sub = self.beats[self._play_beat]["sub"]
-        return 60.0 / self.bpm / sub
-
-    def _next_event(self):
-        beat = self.beats[self._play_beat]
-        state = beat["state"]
-        sub = beat["sub"]
-        is_main = (self._play_sub == 0)
-
-        wave = None
-        if state != "mute":
-            cache = SOUND_CACHE[self._current_sound]
-            if state == "accent" and is_main:
-                wave = cache["accent"]
-            elif is_main:
-                wave = cache["normal"]
-            else:
-                wave = cache["sub"]
-            wave = wave *
     # ---------------- 逻辑 ----------------
     def on_beats_edited(self):
         pass
