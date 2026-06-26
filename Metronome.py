@@ -3,7 +3,7 @@ import time
 import numpy as np
 from PyQt5.QtWidgets import (
     QApplication, QWidget, QVBoxLayout, QHBoxLayout, QLabel,
-    QPushButton, QSlider, QComboBox, QLineEdit, QCheckBox,
+    QPushButton, QSlider, QComboBox, QLineEdit,
     QGridLayout, QFrame, QSpinBox
 )
 from PyQt5.QtCore import Qt, QTimer
@@ -259,15 +259,35 @@ class Metronome(QWidget):
         self.root.setContentsMargins(26, 22, 26, 22)
         self.root.setSpacing(14)
 
-        # 顶部栏
+        # 顶部栏：左上 置顶+迷你 图标，右上 主题图标，中间速度术语
         top = QHBoxLayout()
+        self.ontop_btn = QPushButton("📌")
+        self.ontop_btn.setObjectName("icon")
+        self.ontop_btn.setFixedSize(34, 34)
+        self.ontop_btn.setCheckable(True)
+        self.ontop_btn.setCursor(Qt.PointingHandCursor)
+        self.ontop_btn.setToolTip("置顶窗口")
+        self.ontop_btn.clicked.connect(self.toggle_on_top)
+        top.addWidget(self.ontop_btn)
+
+        self.mini_btn = QPushButton("🗕")
+        self.mini_btn.setObjectName("icon")
+        self.mini_btn.setFixedSize(34, 34)
+        self.mini_btn.setCursor(Qt.PointingHandCursor)
+        self.mini_btn.setToolTip("迷你模式")
+        self.mini_btn.clicked.connect(lambda: self.set_mini(True))
+        top.addWidget(self.mini_btn)
+
+        top.addStretch()
         self.term_label = QLabel("Allegro")
         self.term_label.setObjectName("term")
         top.addWidget(self.term_label)
         top.addStretch()
+
         self.theme_btn = QPushButton("🌙")
         self.theme_btn.setObjectName("icon")
         self.theme_btn.setFixedSize(34, 34)
+        self.theme_btn.setCursor(Qt.PointingHandCursor)
         self.theme_btn.clicked.connect(self.toggle_theme)
         top.addWidget(self.theme_btn)
         self.root.addLayout(top)
@@ -303,18 +323,27 @@ class Metronome(QWidget):
         adj.addWidget(self.plus_btn)
         self.root.addLayout(adj)
 
-        # 快速 + Tap
+        # 预设 BPM
         quick = QHBoxLayout()
-        for v in (60, 90, 120, 140, 180):
+        quick.setSpacing(5)
+        for v in (60, 70, 80, 90, 100, 120, 160, 200, 240):
             qb = QPushButton(str(v))
             qb.setObjectName("chip")
             qb.clicked.connect(lambda _, x=v: self.set_bpm(x))
             quick.addWidget(qb)
-        self.tap_btn = QPushButton("TAP")
-        self.tap_btn.setObjectName("chip")
-        self.tap_btn.clicked.connect(self.tap_tempo)
-        quick.addWidget(self.tap_btn)
         self.root.addLayout(quick)
+
+        # TAP 单独小按钮
+        tap_row = QHBoxLayout()
+        tap_row.addStretch()
+        self.tap_btn = QPushButton("TAP")
+        self.tap_btn.setObjectName("tap")
+        self.tap_btn.setFixedWidth(110)
+        self.tap_btn.setCursor(Qt.PointingHandCursor)
+        self.tap_btn.clicked.connect(self.tap_tempo)
+        tap_row.addWidget(self.tap_btn)
+        tap_row.addStretch()
+        self.root.addLayout(tap_row)
 
         # 提示
         self.hint = QLabel("圆点：左键 重拍/普通/静音 · 右键 细分　|　空格启停 ↑↓调速")
@@ -357,16 +386,6 @@ class Metronome(QWidget):
             lambda v: setattr(self, "volume", v / 100))
         grid.addWidget(self.vol_slider, 2, 1)
         self.root.addLayout(grid)
-
-        # 选项
-        opts = QHBoxLayout()
-        self.top_chk = QCheckBox("置顶窗口")
-        self.top_chk.stateChanged.connect(self.toggle_on_top)
-        self.mini_chk = QCheckBox("迷你模式")
-        self.mini_chk.stateChanged.connect(lambda s: self.set_mini(bool(s)))
-        opts.addWidget(self.top_chk)
-        opts.addWidget(self.mini_chk)
-        self.root.addLayout(opts)
 
         # 启停
         self.play_btn = QPushButton("▶  开始")
@@ -581,7 +600,8 @@ class Metronome(QWidget):
         th = THEMES["dark" if self.dark else "light"]
         state = self.beats[self._visual_beat]["state"]
         color = th["accent"] if state == "accent" else th["normal"]
-        self.mini_dot.setStyleSheet(f"color:{color};")
+        self.mini_dot.setStyleSheet(
+            f"color:{color}; background: transparent;")
 
     # ---------------- 键盘快捷键 ----------------
     def keyPressEvent(self, e):
@@ -605,11 +625,8 @@ class Metronome(QWidget):
     # ---------------- 迷你模式（无边框 + 不透明，求稳） ----------------
     def set_mini(self, on):
         self.mini_mode = on
-        self.mini_chk.blockSignals(True)
-        self.mini_chk.setChecked(on)
-        self.mini_chk.blockSignals(False)
 
-        bar_w, bar_h = 260, 56
+        bar_w, bar_h = 296, 56     # 加宽，避免三位数 BPM 被遮挡
 
         if on:
             self._set_main_visible(False)
@@ -617,12 +634,11 @@ class Metronome(QWidget):
             self.setMinimumSize(0, 0)
             self.setMaximumSize(16777215, 16777215)
             self.clearMask()
-            self.setAttribute(Qt.WA_TranslucentBackground, False)  # 不透明，求稳
-            # 无边框 + 置顶（不带 Tool、不透明 → 不触发 layered window 崩溃）
+            self.setAttribute(Qt.WA_TranslucentBackground, False)
             self.setWindowFlags(
                 Qt.FramelessWindowHint | Qt.WindowStaysOnTopHint)
             self.mini_pin.setChecked(True)
-            self.mini_pin.setText("📌")
+            self.mini_pin.setText("📍")     # 已置顶
             self.mini_bar.show()
             self.mini_bar.raise_()
             self.show()
@@ -635,7 +651,7 @@ class Metronome(QWidget):
             self.root.setContentsMargins(26, 22, 26, 22)
             self.setWindowFlags(Qt.Window)
             self.setWindowFlag(Qt.WindowStaysOnTopHint,
-                               self.top_chk.isChecked())
+                               self.ontop_btn.isChecked())
             self.setMinimumSize(self.normal_min_w, 0)
             self.setMaximumSize(16777215, 16777215)
             self.show()
@@ -661,7 +677,7 @@ class Metronome(QWidget):
 
     def toggle_mini_pin(self):
         on = self.mini_pin.isChecked()
-        self.mini_pin.setText("📌" if on else "📍")
+        self.mini_pin.setText("📍" if on else "📌")
         self.setWindowFlag(Qt.WindowStaysOnTopHint, on)
         self.show()
 
@@ -686,9 +702,10 @@ class Metronome(QWidget):
             d.update()
         self.apply_theme()
 
-    def toggle_on_top(self, state):
+    def toggle_on_top(self):
+        on = self.ontop_btn.isChecked()
         if not self.mini_mode:
-            self.setWindowFlag(Qt.WindowStaysOnTopHint, bool(state))
+            self.setWindowFlag(Qt.WindowStaysOnTopHint, on)
             self.show()
 
     def apply_theme(self):
@@ -712,6 +729,7 @@ class Metronome(QWidget):
                 border-radius: 17px; font-size: 15px;
             }}
             #icon:hover {{ background: {th['hover']}; }}
+            #icon:checked {{ background: {th['blue']}; color: white; }}
 
             #round {{
                 background: {th['card']}; border: 1px solid {th['border']};
@@ -721,10 +739,18 @@ class Metronome(QWidget):
 
             #chip {{
                 background: {th['card']}; border: 1px solid {th['border']};
-                border-radius: 14px; padding: 8px 10px;
-                font-size: 13px; color: {th['blue']}; font-weight: 500;
+                border-radius: 12px; padding: 7px 4px;
+                font-size: 12px; color: {th['blue']}; font-weight: 500;
             }}
             #chip:hover {{ background: {th['blue']}; color: white; }}
+
+            #tap {{
+                background: {th['card']}; border: 1px solid {th['border']};
+                border-radius: 14px; padding: 8px 10px;
+                font-size: 13px; color: {th['blue']};
+                font-weight: 700; letter-spacing: 2px;
+            }}
+            #tap:hover {{ background: {th['blue']}; color: white; }}
 
             #play {{
                 background: {th['blue']}; color: white; border: none;
@@ -755,16 +781,7 @@ class Metronome(QWidget):
                 width: 20px; height: 20px; margin: -8px 0; border-radius: 10px;
             }}
 
-            QCheckBox {{ font-size: 13px; color: {th['text']}; spacing: 6px; }}
-            QCheckBox::indicator {{
-                width: 18px; height: 18px; border-radius: 5px;
-                border: 1px solid {th['border']}; background: {th['card']};
-            }}
-            QCheckBox::indicator:checked {{
-                background: {th['blue']}; border: 1px solid {th['blue']};
-            }}
-
-            /* ---- 迷你条（实心，无特效） ---- */
+            /* ---- 迷你条（实心，无特效，背景统一） ---- */
             #miniBar {{
                 background: {th['glass']};
                 border: 1px solid {th['glassBorder']};
@@ -776,13 +793,15 @@ class Metronome(QWidget):
                 padding-left: 2px;
             }}
             #miniPlay:hover {{ background: {th['normal']}; }}
-            #miniDot {{ font-size: 11px; color: {th['normal']}; }}
+            #miniDot {{ font-size: 11px; color: {th['normal']};
+                       background: transparent; }}
             #miniBpm {{
                 font-size: 22px; font-weight: 700; color: {th['text']};
-                min-width: 42px;
+                background: transparent; min-width: 62px;
             }}
             #miniUnit {{
                 font-size: 9px; color: {th['sub']};
+                background: transparent;
                 letter-spacing: 1px; padding-bottom: 4px;
             }}
             #miniStep {{
@@ -795,11 +814,15 @@ class Metronome(QWidget):
             }}
             #miniSep {{ background: {th['border']}; border: none; }}
             #miniIcon {{
-                background: transparent; border: none;
-                border-radius: 13px; font-size: 13px; color: {th['sub']};
+                background: transparent;
+                border: 1px solid {th['border']}; border-radius: 13px;
+                font-size: 12px; color: {th['sub']};
             }}
             #miniIcon:hover {{ background: {th['hover']}; }}
-            #miniIcon:checked {{ background: {th['blue']}; }}
+            #miniIcon:checked {{
+                background: transparent;
+                border: 1px solid {th['border']}; color: {th['text']};
+            }}
         """)
 
     def closeEvent(self, e):
