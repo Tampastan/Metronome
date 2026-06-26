@@ -259,7 +259,7 @@ class Metronome(QWidget):
         self.root.setContentsMargins(26, 22, 26, 22)
         self.root.setSpacing(14)
 
-        # 顶部栏：左上 置顶+迷你 图标，右上 主题图标，中间速度术语
+        # 顶部栏：左上 置顶图标，右上 主题图标 + 其下 迷你图标，中间速度术语
         top = QHBoxLayout()
         self.ontop_btn = QPushButton("📌")
         self.ontop_btn.setObjectName("icon")
@@ -268,7 +268,23 @@ class Metronome(QWidget):
         self.ontop_btn.setCursor(Qt.PointingHandCursor)
         self.ontop_btn.setToolTip("置顶窗口")
         self.ontop_btn.clicked.connect(self.toggle_on_top)
-        top.addWidget(self.ontop_btn)
+        top.addWidget(self.ontop_btn, alignment=Qt.AlignTop)
+
+        top.addStretch()
+        self.term_label = QLabel("Allegro")
+        self.term_label.setObjectName("term")
+        top.addWidget(self.term_label, alignment=Qt.AlignTop)
+        top.addStretch()
+
+        # 右上角：主题按钮 + 其下方迷你按钮
+        right_box = QVBoxLayout()
+        right_box.setSpacing(6)
+        self.theme_btn = QPushButton("🌙")
+        self.theme_btn.setObjectName("icon")
+        self.theme_btn.setFixedSize(34, 34)
+        self.theme_btn.setCursor(Qt.PointingHandCursor)
+        self.theme_btn.clicked.connect(self.toggle_theme)
+        right_box.addWidget(self.theme_btn)
 
         self.mini_btn = QPushButton("🗕")
         self.mini_btn.setObjectName("icon")
@@ -276,20 +292,8 @@ class Metronome(QWidget):
         self.mini_btn.setCursor(Qt.PointingHandCursor)
         self.mini_btn.setToolTip("迷你模式")
         self.mini_btn.clicked.connect(lambda: self.set_mini(True))
-        top.addWidget(self.mini_btn)
-
-        top.addStretch()
-        self.term_label = QLabel("Allegro")
-        self.term_label.setObjectName("term")
-        top.addWidget(self.term_label)
-        top.addStretch()
-
-        self.theme_btn = QPushButton("🌙")
-        self.theme_btn.setObjectName("icon")
-        self.theme_btn.setFixedSize(34, 34)
-        self.theme_btn.setCursor(Qt.PointingHandCursor)
-        self.theme_btn.clicked.connect(self.toggle_theme)
-        top.addWidget(self.theme_btn)
+        right_box.addWidget(self.mini_btn)
+        top.addLayout(right_box)
         self.root.addLayout(top)
 
         # BPM 大数字
@@ -412,9 +416,13 @@ class Metronome(QWidget):
         self.mini_dot.setFixedWidth(14)
         self.mini_dot.setAlignment(Qt.AlignCenter)
 
-        self.mini_bpm = QLabel(str(self.bpm))
+        self.mini_bpm = QLineEdit(str(self.bpm))
         self.mini_bpm.setObjectName("miniBpm")
         self.mini_bpm.setAlignment(Qt.AlignVCenter | Qt.AlignLeft)
+        self.mini_bpm.setValidator(QIntValidator(20, 400))
+        self.mini_bpm.setFixedWidth(62)
+        self.mini_bpm.setFrame(False)
+        self.mini_bpm.editingFinished.connect(self.on_mini_bpm_typed)
 
         self.mini_unit = QLabel("BPM")
         self.mini_unit.setObjectName("miniUnit")
@@ -489,7 +497,8 @@ class Metronome(QWidget):
 
     def update_display(self):
         self.bpm_edit.setText(str(self.bpm))
-        self.mini_bpm.setText(str(self.bpm))
+        if not self.mini_bpm.hasFocus():
+            self.mini_bpm.setText(str(self.bpm))
         self.term_label.setText(self.speed_term(self.bpm))
         if self.slider.value() != self.bpm:
             self.slider.blockSignals(True)
@@ -510,6 +519,13 @@ class Metronome(QWidget):
             self.set_bpm(int(self.bpm_edit.text()))
         except ValueError:
             self.update_display()
+
+    def on_mini_bpm_typed(self):
+        try:
+            self.set_bpm(int(self.mini_bpm.text()))
+        except ValueError:
+            self.update_display()
+        self.mini_bpm.clearFocus()
 
     def on_slider(self, v):
         self.set_bpm(v)
@@ -606,8 +622,8 @@ class Metronome(QWidget):
     # ---------------- 键盘快捷键 ----------------
     def keyPressEvent(self, e):
         key = e.key()
-        editing = self.bpm_edit.hasFocus()
-        if key == Qt.Key_Space:
+        editing = self.bpm_edit.hasFocus() or self.mini_bpm.hasFocus()
+        if key == Qt.Key_Space and not editing:
             self.toggle_play()
             e.accept(); return
         if key == Qt.Key_Up:
@@ -616,7 +632,7 @@ class Metronome(QWidget):
         if key == Qt.Key_Down:
             self.change_bpm(-5 if e.modifiers() & Qt.ShiftModifier else -1)
             e.accept(); return
-        if key == Qt.Key_M:
+        if key == Qt.Key_M and not editing:
             self.set_mini(not self.mini_mode)
             e.accept(); return
         if not editing:
@@ -704,6 +720,7 @@ class Metronome(QWidget):
 
     def toggle_on_top(self):
         on = self.ontop_btn.isChecked()
+        self.ontop_btn.setText("📍" if on else "📌")
         if not self.mini_mode:
             self.setWindowFlag(Qt.WindowStaysOnTopHint, on)
             self.show()
@@ -729,7 +746,10 @@ class Metronome(QWidget):
                 border-radius: 17px; font-size: 15px;
             }}
             #icon:hover {{ background: {th['hover']}; }}
-            #icon:checked {{ background: {th['blue']}; color: white; }}
+            #icon:checked {{
+                background: transparent;
+                border: 1px solid {th['border']}; color: {th['text']};
+            }}
 
             #round {{
                 background: {th['card']}; border: 1px solid {th['border']};
@@ -797,7 +817,12 @@ class Metronome(QWidget):
                        background: transparent; }}
             #miniBpm {{
                 font-size: 22px; font-weight: 700; color: {th['text']};
-                background: transparent; min-width: 62px;
+                background: transparent; border: none;
+                min-width: 62px;
+            }}
+            #miniBpm:focus {{
+                background: {th['hover']};
+                border-radius: 6px;
             }}
             #miniUnit {{
                 font-size: 9px; color: {th['sub']};
